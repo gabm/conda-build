@@ -902,7 +902,8 @@ def build(m, config, post=None, need_source_download=True, need_reparse_in_env=F
     if config.skip_existing:
         package_exists = is_package_built(m, config)
         if package_exists:
-            print(m.dist(), "is already built in {0}, skipping.".format(package_exists))
+            #print(m.dist(), "is already built in {0}, skipping.".format(package_exists))
+            print(m.dist(), "is already built in {0}, skipping.".format(package_exists[0]))            
             return []
 
     built_packages = []
@@ -1589,10 +1590,18 @@ def is_package_built(metadata, config):
     if config.channel_urls:
         urls.extend(config.channel_urls)
 
-    # will be empty if none found, and evalute to False
-    package_exists = [url for url in urls if url + '::' + metadata.pkg_fn() in index]
-    return package_exists or metadata.pkg_fn() in index
+#    print("index:")
+#    print(index)
+#    for dist in index:
+#        print("dist: {0}".format(dist))
+#        if metadata.dist() in dist:
+#            print("meta: {0}".format(metadata.dist()))
+#            print("dist: {0}".format(dist))
 
+    # will be empty if none found, and evalute to False
+#    package_exists = [url for url in urls if url + '::' + metadata.pkg_fn() in index]
+    package_exists = [dist for dist in index if metadata.dist() in dist]
+    return package_exists or metadata.pkg_fn() in index
 
 def is_noarch_python(meta):
     return str(meta.get_value('build/noarch')).lower() == "python"
