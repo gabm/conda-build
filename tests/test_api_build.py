@@ -3,6 +3,7 @@ This module tests the build API.  These are high-level integration tests.
 """
 
 from collections import OrderedDict
+from glob import glob
 import logging
 import os
 import subprocess
@@ -26,7 +27,7 @@ import tarfile
 from conda_build import api, exceptions, __version__
 from conda_build.build import VersionOrder
 from conda_build.utils import (copy_into, on_win, check_call_env, convert_path_for_cygwin_or_msys2,
-                               package_has_file)
+                               package_has_file, check_output_env)
 from conda_build.os_utils.external import find_executable
 
 from .utils import (metadata_dir, fail_dir, is_valid_dir, testing_workdir, test_config,
@@ -65,7 +66,7 @@ class AnacondaClientArgs(object):
 def describe_root(cwd=None):
     if not cwd:
         cwd = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    tag = subprocess.check_output(["git", "describe", "--abbrev=0"], cwd=cwd).rstrip()
+    tag = check_output_env(["git", "describe", "--abbrev=0"], cwd=cwd).rstrip()
     if PY3:
         tag = tag.decode("utf-8")
     return tag
@@ -125,7 +126,7 @@ def test_no_anaconda_upload_condarc(service_name, testing_workdir, test_config, 
 def test_git_describe_info_on_branch(test_config):
     output = api.get_output_file_path(os.path.join(metadata_dir, "_git_describe_number_branch"))
     test_path = os.path.join(sys.prefix, "conda-bld", test_config.subdir,
-                             "git_describe_number_branch-1.20.2-1_g82c6ba6.tar.bz2")
+                             "git_describe_number_branch-1.20.2.0-1_g82c6ba6.tar.bz2")
     assert test_path == output
 
 
@@ -212,7 +213,7 @@ def test_dirty_variable_available_in_build_scripts(testing_workdir, test_config)
     test_config.dirty = True
     api.build(recipe, config=test_config)
 
-    with pytest.raises(SystemExit):
+    with pytest.raises(subprocess.CalledProcessError):
         test_config.dirty = False
         api.build(recipe, config=test_config)
 
@@ -352,6 +353,11 @@ def test_skip_existing_url(test_metadata, testing_workdir, capfd):
     # create the index so conda can find the file
     api.update_index(platform, config=test_metadata.config)
 
+    # HACK: manually create noarch location there, so that conda 4.3.2+ considers this a valid channel
+    noarch = os.path.join(output_dir, 'noarch')
+    os.makedirs(noarch)
+    api.update_index(noarch, config=test_metadata.config)
+
     test_metadata.config.skip_existing = True
     test_metadata.config.channel_urls = [url_path(output_dir)]
     api.build(test_metadata)
@@ -405,11 +411,11 @@ def test_render_setup_py_old_funcname(testing_workdir, test_config, caplog):
 
 def test_debug_build_option(test_metadata, caplog, capfd):
     logging.basicConfig(level=logging.INFO)
-    info_message = "Starting new HTTPS connection"
-    debug_message = "GET /pkgs/free/noarch/repodata.json.bz2 HTTP/1.1"
+    info_message = "INFO"
+    debug_message = "DEBUG"
     api.build(test_metadata)
     # this comes from an info message
-    assert info_message not in caplog.text()
+    assert info_message in caplog.text()
     # this comes from a debug message
     assert debug_message not in caplog.text()
 
@@ -486,43 +492,43 @@ def test_relative_git_url_submodule_clone(testing_workdir):
     for tag in range(2):
         os.chdir(absolute_sub)
         if tag == 0:
-            subprocess.check_call([git, 'init'], env=sys_git_env)
+            check_call_env([git, 'init'], env=sys_git_env)
         with open('absolute', 'w') as f:
             f.write(str(tag))
-        subprocess.check_call([git, 'add', 'absolute'], env=sys_git_env)
-        subprocess.check_call([git, 'commit', '-m', 'absolute{}'.format(tag)],
+        check_call_env([git, 'add', 'absolute'], env=sys_git_env)
+        check_call_env([git, 'commit', '-m', 'absolute{}'.format(tag)],
                                 env=sys_git_env)
 
         os.chdir(relative_sub)
         if tag == 0:
-            subprocess.check_call([git, 'init'], env=sys_git_env)
+            check_call_env([git, 'init'], env=sys_git_env)
         with open('relative', 'w') as f:
             f.write(str(tag))
-        subprocess.check_call([git, 'add', 'relative'], env=sys_git_env)
-        subprocess.check_call([git, 'commit', '-m', 'relative{}'.format(tag)],
+        check_call_env([git, 'add', 'relative'], env=sys_git_env)
+        check_call_env([git, 'commit', '-m', 'relative{}'.format(tag)],
                                 env=sys_git_env)
 
         os.chdir(toplevel)
         if tag == 0:
-            subprocess.check_call([git, 'init'], env=sys_git_env)
+            check_call_env([git, 'init'], env=sys_git_env)
         with open('toplevel', 'w') as f:
             f.write(str(tag))
-        subprocess.check_call([git, 'add', 'toplevel'], env=sys_git_env)
-        subprocess.check_call([git, 'commit', '-m', 'toplevel{}'.format(tag)],
+        check_call_env([git, 'add', 'toplevel'], env=sys_git_env)
+        check_call_env([git, 'commit', '-m', 'toplevel{}'.format(tag)],
                                 env=sys_git_env)
         if tag == 0:
-            subprocess.check_call([git, 'submodule', 'add',
+            check_call_env([git, 'submodule', 'add',
                                     convert_path_for_cygwin_or_msys2(git, absolute_sub), 'absolute'],
                                     env=sys_git_env)
-            subprocess.check_call([git, 'submodule', 'add', '../relative_sub', 'relative'],
+            check_call_env([git, 'submodule', 'add', '../relative_sub', 'relative'],
                                     env=sys_git_env)
         else:
             # Once we use a more recent Git for Windows than 2.6.4 on Windows or m2-git we
             # can change this to `git submodule update --recursive`.
-            subprocess.check_call([git, 'submodule', 'foreach', git, 'pull'], env=sys_git_env)
-        subprocess.check_call([git, 'commit', '-am', 'added submodules@{}'.format(tag)],
+            check_call_env([git, 'submodule', 'foreach', git, 'pull'], env=sys_git_env)
+        check_call_env([git, 'commit', '-am', 'added submodules@{}'.format(tag)],
                               env=sys_git_env)
-        subprocess.check_call([git, 'tag', '-a', str(tag), '-m', 'tag {}'.format(tag)],
+        check_call_env([git, 'tag', '-a', str(tag), '-m', 'tag {}'.format(tag)],
                                 env=sys_git_env)
 
         # It is possible to use `Git for Windows` here too, though you *must* not use a different
@@ -594,11 +600,11 @@ def test_disable_pip(test_config):
     metadata, _, _ = api.render(recipe_path, config=test_config)
 
     metadata.meta['build']['script'] = 'python -c "import pip"'
-    with pytest.raises(SystemExit):
+    with pytest.raises(subprocess.CalledProcessError):
         api.build(metadata)
 
     metadata.meta['build']['script'] = 'python -c "import setuptools"'
-    with pytest.raises(SystemExit):
+    with pytest.raises(subprocess.CalledProcessError):
         api.build(metadata)
 
 
@@ -789,3 +795,34 @@ def test_build_expands_wildcards(mocker, testing_workdir):
     output = [os.path.join(os.getcwd(), path, 'meta.yaml') for path in files]
     build_tree.assert_called_once_with(output, post=None, need_source_download=True,
                                        build_only=False, notest=False, config=config)
+
+
+@pytest.mark.serial
+def test_remove_workdir_default(test_config, caplog):
+    recipe = os.path.join(metadata_dir, '_keep_work_dir')
+    api.build(recipe, config=test_config)
+    assert not glob(os.path.join(test_config.work_dir, '*'))
+
+
+@pytest.mark.serial
+def test_keep_workdir(test_config, caplog):
+    recipe = os.path.join(metadata_dir, '_keep_work_dir')
+    api.build(recipe, config=test_config, dirty=True, remove_work_dir=False, debug=True)
+    assert "Not removing work directory after build" in caplog.text()
+    assert glob(os.path.join(test_config.work_dir, '*'))
+    test_config.clean()
+
+
+@pytest.mark.serial
+def test_workdir_removal_warning(test_config, caplog):
+    recipe = os.path.join(metadata_dir, '_test_uses_src_dir')
+    with pytest.raises(ValueError) as exc:
+        api.build(recipe, config=test_config)
+        assert "work dir is removed" in str(exc)
+
+
+@pytest.mark.serial
+def test_workdir_removal_warning_no_remove(test_config, caplog):
+    recipe = os.path.join(metadata_dir, '_test_uses_src_dir')
+    api.build(recipe, config=test_config, remove_work_dir=False)
+    assert "Not removing work directory after build" in caplog.text()

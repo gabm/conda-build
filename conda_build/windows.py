@@ -4,6 +4,7 @@ import os
 import sys
 from os.path import isdir, join, dirname, isfile
 
+import bs4
 # importing setuptools patches distutils so that it knows how to find VC for python 2.7
 import setuptools  # noqa
 # Leverage the hard work done by setuptools/distutils to find vcvarsall using
@@ -14,7 +15,7 @@ from distutils.msvc9compiler import Reg, WINSDK_BASE
 from .conda_interface import bits
 
 from conda_build import environ
-from conda_build.utils import _check_call, root_script_dir, path_prepended, copy_into
+from conda_build.utils import check_call_env, root_script_dir, path_prepended, copy_into
 
 
 assert sys.platform == 'win32'
@@ -43,7 +44,7 @@ def fix_staged_scripts(scripts_dir):
             continue
 
         with open(join(scripts_dir, fn)) as f:
-            line = f.readline().lower()
+            line = bs4.UnicodeDammit(f.readline()).unicode_markup.lower()
             # If it's a #!python script
             if not (line.startswith('#!') and 'python' in line.lower()):
                 continue
@@ -227,6 +228,6 @@ def build(m, bld_bat, config):
             fo.write(data)
 
         cmd = ['cmd.exe', '/c', 'bld.bat']
-        _check_call(cmd, cwd=src_dir)
+        check_call_env(cmd, cwd=src_dir)
 
     fix_staged_scripts(join(config.build_prefix, 'Scripts'))

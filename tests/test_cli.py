@@ -14,7 +14,8 @@ from conda_build.conda_interface import download
 from conda_build.tarcheck import TarCheck
 
 from conda_build import api
-from conda_build.utils import get_site_packages, on_win, get_build_folders, package_has_file
+from conda_build.utils import (get_site_packages, on_win, get_build_folders, package_has_file,
+                               check_call_env)
 from conda_build.conda_interface import TemporaryDirectory
 from .utils import (testing_workdir, metadata_dir, testing_env, test_config, test_metadata,
                     put_bad_conda_on_path)
@@ -41,8 +42,8 @@ def test_build_with_conda_not_on_path(testing_workdir):
     with put_bad_conda_on_path(testing_workdir):
         # using subprocess is not ideal, but it is the easiest way to ensure that PATH
         #    is altered the way we want here.
-        subprocess.check_call('conda-build {0}'.format(os.path.join(metadata_dir, "python_run")),
-                              env=os.environ, shell=True)
+        check_call_env('conda-build {0}'.format(os.path.join(metadata_dir, "python_run")).split(),
+                              env=os.environ)
 
 def test_build_add_channel():
     """This recipe requires the blinker package, which is only on conda-forge.
@@ -136,10 +137,8 @@ def test_build_output_folder(testing_workdir, test_metadata, capfd):
         args = [testing_workdir, '--no-build-id',
                 '--croot', tmp, '--no-activate', '--no-anaconda-upload',
                 '--output-folder', out]
-        main_build.execute(args)
-        test_metadata.config.output_folder = out
-        output, error = capfd.readouterr()
-        assert "anaconda upload {}".format(out) in output
+        output = main_build.execute(args)[0]
+        assert os.path.isfile(os.path.join(out, test_metadata.config.subdir, os.path.basename(output)))
 
 
 def test_render_output_build_path_set_python(testing_workdir, test_metadata, capfd):

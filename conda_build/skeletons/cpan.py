@@ -20,7 +20,7 @@ from conda_build.conda_interface import MatchSpec, Resolve
 from conda_build.conda_interface import memoized
 
 from conda_build.config import Config
-from conda_build.utils import on_win
+from conda_build.utils import on_win, check_call_env
 
 CPAN_META = """\
 package:
@@ -173,7 +173,7 @@ def package_exists(package_name):
         if on_win:
             cmd.insert(0, '/c')
             cmd.insert(0, 'cmd.exe')
-        subprocess.check_call(cmd)
+        check_call_env(cmd)
         in_repo = True
     except subprocess.CalledProcessError:
         in_repo = False
@@ -600,8 +600,8 @@ def get_release_info(cpan_url, package, version, perl_version, config,
     # If the latest isn't the version we're looking for, we have to do another
     # request
     version_str = str(version)
-    if (version is not None) and (LooseVersion('0') != version_str and
-            (rel_dict['version'] != version_str)):
+    if (version is not None) and (LooseVersion('0') != LooseVersion(version_str) and
+            (LooseVersion(rel_dict['version']) != LooseVersion(version_str))):
         author = rel_dict['author']
         try:
             new_rel_dict = get_cpan_api_url('{0}/v0/release/{1}/{2}-{3}'.format(cpan_url,

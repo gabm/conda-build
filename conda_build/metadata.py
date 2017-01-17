@@ -544,7 +544,8 @@ class MetaData(object):
         if res is None:
             sys.exit("Error: package/version missing in: %r" % self.meta_path)
         check_bad_chrs(res, 'package/version')
-        assert not res.startswith('.'), "Version can't start with leading period -  got %s" % res
+        assert self.undefined_jinja_vars or not res.startswith('.'), "Fully-rendered version can't\
+        start with leading period -  got %s" % res
         return res
 
     def build_number(self):
@@ -868,6 +869,6 @@ class MetaData(object):
         return None
 
     def validate_features(self):
-        if any('-' in feature for feature in self.get_value('build/features')):
+        if any('-' in feature for feature in ensure_list(self.get_value('build/features'))):
             raise ValueError("- is a disallowed character in features.  Please change this "
                              "character in your recipe.")

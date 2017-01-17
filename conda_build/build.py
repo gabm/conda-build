@@ -797,7 +797,7 @@ def bundle_conda(output, metadata, config, env, **kw):
         if not interpreter:
             interpreter = guess_interpreter(output['script'])
         initial_files_snapshot = prefix_files(config.build_prefix)
-        utils._check_call(interpreter.split(' ') +
+        utils.check_call_env(interpreter.split(' ') +
                     [os.path.join(metadata.path, output['script'])],
                     cwd=config.build_prefix, env=env)
         files = prefix_files(config.build_prefix) - initial_files_snapshot
@@ -813,10 +813,6 @@ def bundle_conda(output, metadata, config, env, **kw):
         if f not in files:
             files.append(f)
     files = filter_files(files, prefix=config.build_prefix)
-    output_folder = None
-    if config.output_folder:
-        output_folder = os.path.join(config.output_folder, config.subdir)
-    final_output = os.path.join(output_folder or config.bldpkgs_dir, output_filename)
 
     # lock the output directory while we build this file
     # create the tarball in a temporary directory to minimize lock time
@@ -848,9 +844,25 @@ def bundle_conda(output, metadata, config, env, **kw):
                           config.run_package_verify_scripts else None
             verifier.verify_package(ignore_scripts=ignore_scripts, run_scripts=run_scripts,
                                     path_to_package=tmp_path)
+        if config.output_folder:
+            output_folder = os.path.join(config.output_folder, config.subdir)
+        else:
+            output_folder = config.bldpkgs_dir
+        final_output = os.path.join(output_folder, output_filename)
         if os.path.isfile(final_output):
             os.remove(final_output)
+        print(final_output)
         utils.copy_into(tmp_path, final_output, config.timeout, locking=config.locking)
+
+    update_index(os.path.dirname(output_folder), config=config)
+
+    # HACK: conda really wants a noarch folder to be around.  Create it as necessary.
+    if os.path.basename(output_folder) != 'noarch':
+        try:
+            os.makedirs(os.path.join(os.path.dirname(output_folder), 'noarch'))
+        except OSError:
+            pass
+        update_index(os.path.join(os.path.dirname(output_folder), 'noarch'), config=config)
 
     # remove files from build prefix.  This is so that they can be included in other packages.  If
     #     we were to leave them in place, then later scripts meant to also include them may not.
@@ -882,7 +894,6 @@ def build(m, config, post=None, need_source_download=True, need_reparse_in_env=F
     :type m: Metadata
     :type post: bool or None. None means run the whole build. True means run
     post only. False means stop just before the post.
-    :type keep_old_work: bool: Keep any previous work directory.
     :type need_source_download: bool: if rendering failed to download source
     (due to missing tools), retry here after build env is populated
     '''
@@ -1030,7 +1041,7 @@ def build(m, config, post=None, need_source_download=True, need_reparse_in_env=F
                     if isfile(work_file):
                         cmd = [shell_path, '-x', '-e', work_file]
                         # this should raise if any problems occur while building
-                        utils._check_call(cmd, env=env, cwd=src_dir)
+                        utils.check_call_env(cmd, env=env, cwd=src_dir)
 
     if post in [True, None]:
         if post:
@@ -1168,6 +1179,19 @@ def clean_pkg_cache(dist, config):
                     utils.rm_rf(entry)
 
 
+def warn_on_use_of_SRC_DIR(metadata):
+    test_files = glob(os.path.join(metadata.path, 'run_test*'))
+    for f in test_files:
+        with open(f) as _f:
+            contents = _f.read()
+        if ("SRC_DIR" in contents and 'source_files' not in metadata.get_section('test') and
+                metadata.config.remove_work_dir):
+            raise ValueError("In conda-build 2.1+, the work dir is removed by default before the "
+                             "test scripts run.  You are using the SRC_DIR variable in your test "
+                             "script, but these files have been deleted.  Please see the "
+                             " documentation regarding the test/source_files meta.yaml section, "
+                             "or pass the --no-remove-work-dir flag.")
+
 def test(recipedir_or_package_or_metadata, config, move_broken=True):
     '''
     Execute any test scripts for the given package.
@@ -1175,6 +1199,7 @@ def test(recipedir_or_package_or_metadata, config, move_broken=True):
     :param m: Package's metadata.
     :type m: Metadata
     '''
+    log = logging.getLogger(__name__)
     # we want to know if we're dealing with package input.  If so, we can move the input on success.
     need_cleanup = False
 
@@ -1211,6 +1236,8 @@ def test(recipedir_or_package_or_metadata, config, move_broken=True):
                     not os.listdir(config.work_dir)):
                 source.provide(metadata, config=config)
 
+    warn_on_use_of_SRC_DIR(metadata)
+
     config.compute_build_id(metadata.name())
 
     clean_pkg_cache(metadata.dist(), config)
@@ -1232,9 +1259,13 @@ def test(recipedir_or_package_or_metadata, config, move_broken=True):
 
     print("TEST START:", metadata.dist())
 
-    # Needs to come after create_files in case there's test/source_files
-    print("Deleting work directory,", config.work_dir)
-    utils.rm_rf(config.work_dir)
+    if config.remove_work_dir:
+        # Needs to come after create_files in case there's test/source_files
+        print("Deleting work directory,", config.work_dir)
+        utils.rm_rf(config.work_dir)
+    else:
+        log.warn("Not removing work directory after build.  Your package may depend on files in "
+                 "the work directory that are not included with your package")
 
     get_build_metadata(metadata, config=config)
     specs = ['%s %s %s' % (metadata.name(), metadata.version(), metadata.build_id())]
@@ -1247,13 +1278,13 @@ def test(recipedir_or_package_or_metadata, config, move_broken=True):
         # as the tests are run by python, ensure that python is installed.
         # (If they already provided python as a run or test requirement,
         #  this won't hurt anything.)
-        specs += ['python %s*' % environ.get_py_ver(config)]
+        specs += ['python %s.*' % environ.get_py_ver(config)]
     if pl_files:
         # as the tests are run by perl, we need to specify it
-        specs += ['perl %s*' % environ.get_perl_ver(config)]
+        specs += ['perl %s.*' % environ.get_perl_ver(config)]
     if lua_files:
         # not sure how this shakes out
-        specs += ['lua %s*' % environ.get_lua_ver(config)]
+        specs += ['lua %s.*' % environ.get_lua_ver(config)]
 
     create_env(config.test_prefix, specs, config=config)
 
@@ -1324,7 +1355,7 @@ def test(recipedir_or_package_or_metadata, config, move_broken=True):
     else:
         cmd = [shell_path, '-x', '-e', test_script]
     try:
-        subprocess.check_call(cmd, env=env, cwd=config.test_dir)
+        utils.check_call_env(cmd, env=env, cwd=config.test_dir)
     except subprocess.CalledProcessError:
         tests_failed(metadata, move_broken=move_broken, broken_dir=config.broken_dir, config=config)
 
@@ -1464,14 +1495,13 @@ packages, the other package needs to be rebuilt
                 recipe_glob = glob(os.path.join(recipe_parent_dir, pkg))
                 if recipe_glob:
                     for recipe_dir in recipe_glob:
-                        print(error_str)
                         print(("Missing dependency {0}, but found" +
                                 " recipe directory, so building " +
                                 "{0} first").format(pkg))
                         add_recipes.append(recipe_dir)
                 else:
-                    raise RuntimeError("Can't build {0} due to unsatisfiable dependencies:\n"
-                                       .format(recipe) + error_str + "\n\n" + extra_help)
+                    raise RuntimeError("Can't build {0} due to unsatisfiable dependencies:\n{1}"
+                                       .format(recipe, e.packages) + "\n\n" + extra_help)
             recipe_list.extendleft(add_recipes)
 
         # outputs message, or does upload, depending on value of args.anaconda_upload
@@ -1557,7 +1587,7 @@ def handle_pypi_upload(f, config):
 
     args.append(f)
     try:
-        subprocess.check_call()
+        utils.check_call_env(args)
     except:
         logging.getLogger(__name__).warn("wheel upload failed - is twine installed?"
                                          "  Is this package registered?")
